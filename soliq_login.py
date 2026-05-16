@@ -8,7 +8,7 @@ import time
 from playwright.async_api import async_playwright
 
 EIMZO_WS = "ws://127.0.0.1:64646/service/cryptapi"
-INN = "312035036"
+INN = input("Enter INN: ").strip()
 
 async def eimzo(ws, plugin, name, arguments=None):
     payload = {"plugin": plugin, "name": name}
