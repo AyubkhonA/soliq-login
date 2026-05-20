@@ -1,68 +1,10 @@
-# Soliq.uz Auto-Login Project
+# Soliq.uz Tax Monitoring Automation
 
 ## What this project does
-Automatically logs in to https://my.soliq.uz using a company INN number.
-No manual clicking needed — fully automated.
-
----
-
-## User Instructions (what was asked)
-
-1. Open Chrome and go to https://my.soliq.uz/main/
-2. Login using EDS keys (PFX files) stored in D:\DSKEYS folder
-3. Login flow:
-   - Click "Юридик шахслар учун"
-   - Click "Кабинетга кириш"
-   - Choose "ESI орқали" mode
-   - Select cert by INN from dropdown
-   - Handle E-IMZO Java PIN dialog automatically
-   - Navigate to main page after login
-4. INN entered by user when script runs (not hardcoded)
-5. PIN = last alphanumeric chunk in the .pfx filename (e.g. DS312003147xxxx-**AAaa123456**.pfx)
-
----
-
-## Technical Details
-
-### Key file location
-- Folder: `D:\DSKEYS\`
-- Format: `DS{INN}{sequence}-{PIN}.pfx`
-- Example: `DS3120031470002        AAaa123456.pfx`
-
-### E-IMZO (Electronic Signature System)
-- Local Java app running WebSocket on `ws://127.0.0.1:64646/service/cryptapi`
-- Use `pfx.list_all_certificates` to get all certs
-- Use `pfx.load_key` with `[disk, "DSKEYS", cert_name, cert_alias]` to load key
-- The 4th argument must be the FULL alias (DN string), NOT the filename
-- Java PIN dialog appears as untitled 1x1 window — handled via pyautogui
-
-### Login flow (ESI OAuth2)
-1. my.soliq.uz → auth?user_type=1
-2. Redirects to esi.uz/oauth2/authorize
-3. Select cert from dropdown (matches by INN)
-4. Click "Kirish"
-5. E-IMZO Java dialog appears → auto-type PIN → Enter
-6. ESI signs challenge → POST to signin3
-7. Callback → client-error (normal) → navigate to my.soliq.uz/main/
-8. Logged in!
-
-### Important findings
-- Must use `ignore_https_errors=True` in Playwright (E-IMZO uses self-signed SSL cert on wss://127.0.0.1:64443)
-- After ESI auth, must manually navigate to https://my.soliq.uz/main/ again
-- `client-error` redirect is normal — just navigate to main after it
-- E-IMZO Java PIN dialog = untitled window 1x1 pixels
-
----
-
-## Files
-
-| File | Location | Purpose |
-|------|----------|---------|
-| soliq_login.py | C:\Users\khanm\ | Main script |
-| soliq_login.py | C:\Users\khanm\soliq-login\ | GitHub copy |
-
-## GitHub
-https://github.com/AyubkhonA/soliq-login
+Fully automated tax report monitoring for multiple companies.
+- Logs into `my.soliq.uz` using EDS (digital signature) keys
+- Scrapes accepted tax reports filtered by selected month
+- Updates the monitoring web app (`khan-accounting-static-app.netlify.app`) automatically
 
 ---
 
@@ -70,24 +12,121 @@ https://github.com/AyubkhonA/soliq-login
 
 ```bash
 cd C:\Users\khanm
-python soliq_login.py
-# Enter INN: 312035036
+python soliq_monitor.py
 ```
 
+**What happens:**
+1. Script asks which month to update (e.g. `May`, `май`, `5`)
+2. Opens browser, logs into monitoring web app
+3. For each of 6 companies:
+   - Logs into my.soliq.uz via EDS cert
+   - Goes to `/wefo4-clientui/form/uz/reports/0`
+   - Clicks "Қабул қилинган" filter
+   - Extracts reports where Давр = tax period (e.g. May → Апрел)
+   - Updates monitoring app cells with status + date
+4. Prints summary table
+
+---
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `soliq_monitor.py` | **Main script** — full batch automation |
+| `soliq_login.py` | Basic single-INN login only |
+| `PROJECT_SUMMARY.md` | This file |
+
+---
+
+## Month Selection Logic
+
+> Taxes for Month N are submitted in Month N+1
+
+| User types | Web app shows | Soliq.uz Давр |
+|-----------|---------------|---------------|
+| May / май / 5 | Май 2026 | Апрел |
+| April / апрел / 4 | Апрел 2026 | Март |
+| January / 1 | Январь 2026 | Декабрь 2025 |
+
+Supports: English / Russian / Uzbek / numbers 1–12
+
+---
+
+## Report → Monitoring Column Mapping
+
+| Пакет № prefix | Column in monitoring app |
+|---------------|--------------------------|
+| 11101 | НДФЛ 15 |
+| 10006 | НДС 20 |
+| 11104 | ПРИБЫЛЬ 20 |
+| 10205 | АВАНСОВЫЙ |
+
+---
+
+## Technical Details
+
+### Key file location
+- Folder: `D:\DSKEYS\`
+- Format: `DS{INN}{sequence} {PIN}.pfx`
+- PIN = last alphanumeric chunk in the filename
+
+### E-IMZO (Electronic Signature System)
+- Local Java app on `ws://127.0.0.1:64646/service/cryptapi`
+- `pfx.list_all_certificates` → find cert by INN
+- `pfx.load_key [disk, "DSKEYS", cert_name, cert_alias]` → load key
+- Java PIN dialog handled via win32gui (4 strategies)
+
+### Login flow (ESI OAuth2)
+1. `my.soliq.uz` → click "Юридик шахслар учун" → "Кабинетга кириш" → "ESI орқали"
+2. Select cert from dropdown by INN
+3. **CAPTCHA** ("Spamdan himoya") — if shown, script pauses and asks user to type code
+4. Click "Kirish"
+5. E-IMZO Java PIN dialog → auto-filled via win32gui + clipboard paste
+6. Navigate to `my.soliq.uz/main/`
+
+### PIN dialog handling (4-strategy fallback)
+1. `win32gui` → Java class name (`SunAwtDialog`, `SunAwtFrame`)
+2. `win32gui` → window title keyword
+3. `pygetwindow` → title keyword
+4. `pygetwindow` → small untitled window
+→ Clicks center of dialog → pastes PIN via clipboard → Enter
+
+### Important findings
+- Must use `ignore_https_errors=True` in Playwright
+- After ESI auth navigate to main manually (`client-error` redirect is normal)
+- Reports page URL: `https://my.soliq.uz/wefo4-clientui/form/uz/reports/0`
+- Page is a React SPA — must wait for table to render before scraping
+- CAPTCHA appears randomly between cert selection and Kirish click
+
+---
+
+## Companies (6)
+
+| Company | INN |
+|---------|-----|
+| ECO NEST UNO | 309338537 |
+| GOLDEN SILK ROAD ENERGY | 310575370 |
+| SIX WINGS INDUSTRIAL | 310981469 |
+| SENYOU INTERNATIONAL | 311133152 |
+| LAIDA HOTEL | 312035036 |
+| TERRA NOVA PROJECT | 312246153 |
+
+---
+
 ## Dependencies
+
 ```bash
-pip install playwright websockets pyautogui websocket-client
+pip install playwright websockets pyautogui pygetwindow pywin32 pyperclip
 playwright install chromium
 ```
 
 ---
 
-## INNs tested
-- 312035036 — LAIDA HOTEL MANAGEMENT (cert: DS3120350360002, PIN: 23136352) ✅
-- 312003147 — FU PENG MCHJ (cert: DS3120031470002, PIN: AAaa123456) ✅
+## GitHub
+https://github.com/AyubkhonA/soliq-login
 
 ---
 
-## What's left / next steps
-- User wants to continue building more features after login
-- Possible next: automate tasks inside the cabinet after login
+## Monitoring Web App
+- URL: https://khan-accounting-static-app.netlify.app/monitoring
+- Login: worker1@test.com / Test12345
